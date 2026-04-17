@@ -15,6 +15,9 @@ Uses [OpenRouter](https://openrouter.ai/) with `openai/gpt-4o-mini` under the ho
 - 🏃 **`--dry-run` mode** — test the pipeline end-to-end without spending any API credits
 - 📊 **Live progress bar** — Rich-powered UI shows you exactly what's happening
 - 🔌 **Pluggable model** — swap the model via `--model` flag if you want GPT-4o, Claude, etc.
+- 🛒 **Shopify push** — update product descriptions directly via Admin REST API
+- 🧾 **Preview diff** — inspect changes before pushing with `--preview`
+- 📦 **Batch controls** — manage rate limits with `--batch-size` and `--batch-sleep`
 
 ---
 
@@ -46,6 +49,17 @@ cp .env.example .env
 ```bash
 python generate_descriptions.py products_sample.csv output.csv
 ```
+
+### Push descriptions to Shopify
+
+```bash
+python generate_descriptions.py push output.csv \
+  --store your-store.myshopify.com \
+  --preview \
+  --batch-size 10
+```
+
+> If `SHOPIFY_TOKEN` isn't set, the push command runs in mock mode and makes no changes.
 
 ### Dry run (no API calls)
 
@@ -91,9 +105,11 @@ See [`products_sample.csv`](products_sample.csv) for a ready-to-use example with
 
 ## Environment variables
 
-| Variable             | Required | Description                      |
-|----------------------|----------|----------------------------------|
-| `OPENROUTER_API_KEY` | Yes      | Your API key from openrouter.ai  |
+| Variable             | Required | Description                              |
+|----------------------|----------|------------------------------------------|
+| `OPENROUTER_API_KEY` | Yes      | Your API key from openrouter.ai          |
+| `SHOPIFY_STORE`      | Yes (push) | Shopify store domain (myshop.myshopify.com) |
+| `SHOPIFY_TOKEN`      | Yes (push) | Shopify Admin API token (if unset → mock) |
 
 ---
 
@@ -108,6 +124,36 @@ shopify-ai-descriptions/
 ├── .gitignore
 └── README.md
 ```
+
+---
+
+## Shopify push command
+
+The `push` command updates `body_html` via Shopify Admin REST API (`PUT /admin/api/2024-01/products/{id}.json`).
+
+### Required CSV columns
+
+- `id` (or `product_id`) — Shopify product ID
+- `description` — the new product description
+
+### Example
+
+```bash
+python generate_descriptions.py push output.csv \
+  --store your-store.myshopify.com \
+  --preview \
+  --batch-size 5 \
+  --batch-sleep 1.5
+```
+
+### Preview mode
+
+Add `--preview` to view a rich diff of the existing vs new description before each update.
+
+### Batch size control
+
+Use `--batch-size` (default 10) to control how many products are updated per batch.
+The CLI waits `--batch-sleep` seconds between batches to help respect API rate limits.
 
 ---
 
