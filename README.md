@@ -6,6 +6,17 @@ Feed it a CSV of products, get back SEO-optimised descriptions — ready to past
 
 Uses [OpenRouter](https://openrouter.ai/) with `openai/gpt-4o-mini` under the hood: fast, cheap, and surprisingly good at writing copy.
 
+## Example Output
+
+| Raw input | Generated description |
+|---|---|
+| `UltraGrip Yoga Mat`<br>`yoga mat, non-slip, eco-friendly, exercise, fitness` | `Elevate every practice with the UltraGrip Yoga Mat — a non-slip, eco-friendly surface built for comfort, stability, and daily training. Crafted from natural rubber with a supportive 6mm profile, it balances cushion with ground feel for home workouts, studio sessions, and on-the-go fitness routines.` |
+| `Wireless Noise-Cancelling Headphones`<br>`headphones, wireless, noise-cancelling, bluetooth, audio` | `Immersive sound meets all-day comfort with Wireless Noise-Cancelling Headphones featuring Bluetooth 5.2, 40mm drivers, and up to 30 hours of battery life. Designed to cut distractions with powerful ANC, they're ideal for travel, work, and focused listening.` |
+
+## Demo
+
+Screenshot coming soon
+
 ---
 
 ## Features
