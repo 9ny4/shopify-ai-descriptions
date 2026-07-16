@@ -21,6 +21,7 @@ import httpx
 from dotenv import load_dotenv
 from openai import OpenAI
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.syntax import Syntax
@@ -35,8 +36,51 @@ DRY_RUN_PLACEHOLDER = (
     "[DRY RUN] SEO-optimized description would be generated here. "
     "Remove --dry-run to call the AI API."
 )
+GENERATION_FAILED_PLACEHOLDER = "[ERROR] Description generation failed."
 SHOPIFY_API_VERSION = "2024-01"
 DEFAULT_BATCH_SLEEP_SECONDS = 1.0
+
+
+class DescriptionGenerationError(RuntimeError):
+    """Raised when the AI API fails to produce a description for a product."""
+
+
+def configure_utf8_output() -> None:
+    """
+    Reconfigure stdout/stderr for UTF-8 where supported.
+
+    On Windows, redirected output defaults to the legacy console code page
+    (e.g. cp1252), which cannot encode glyphs such as '✓' and '→'. Streams
+    that do not support reconfigure() are left untouched; safe_glyph()
+    provides the ASCII fallback for those.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+def safe_glyph(glyph: str, fallback: str) -> str:
+    """
+    Return glyph if the console's output stream can encode it, else fallback.
+
+    Args:
+        glyph: Preferred Unicode glyph (e.g. '✓').
+        fallback: ASCII replacement (e.g. 'OK').
+
+    Returns:
+        A string that is safe to write to the current output stream.
+    """
+    encoding = getattr(console.file, "encoding", None) or "ascii"
+    try:
+        glyph.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return fallback
+    return glyph
 
 
 @dataclass(frozen=True)
@@ -201,6 +245,9 @@ def generate_description(
 
     Returns:
         Generated description as a string.
+
+    Raises:
+        DescriptionGenerationError: If the API call fails or returns no text.
     """
     prompt = build_prompt(name, category, tags, specs)
     try:
@@ -210,10 +257,13 @@ def generate_description(
             temperature=0.7,
             max_tokens=200,
         )
-        return response.choices[0].message.content.strip()
-    except Exception as exc:  # noqa: BLE001
-        console.print(f"[bold red]API error for '{name}':[/] {exc}")
-        return "[ERROR] Description generation failed."
+    except Exception as exc:  # noqa: BLE001 - SDK raises many transport/API error types
+        raise DescriptionGenerationError(str(exc)) from exc
+
+    content = response.choices[0].message.content if response.choices else None
+    if not content or not content.strip():
+        raise DescriptionGenerationError("API returned an empty description.")
+    return content.strip()
 
 
 def validate_csv(reader: csv.DictReader, required_columns: set[str]) -> None:
@@ -357,6 +407,9 @@ def generate_descriptions(
         model: OpenRouter model identifier.
         dry_run: Whether to skip API calls.
         preview: Whether to print preview table.
+
+    Raises:
+        SystemExit: With a non-zero code if any row failed to generate.
     """
     console.print(
         f"[bold green]shopify-ai-descriptions[/]  "
@@ -373,6 +426,8 @@ def generate_descriptions(
         console.print("[yellow]Warning:[/] Input CSV has no data rows.")
         sys.exit(0)
 
+    failed_products: list[str] = []
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -387,31 +442,50 @@ def generate_descriptions(
             if dry_run:
                 row["description"] = DRY_RUN_PLACEHOLDER
             else:
-                row["description"] = generate_description(
-                    client=client,  # type: ignore[arg-type]
-                    name=row["name"],
-                    category=row["category"],
-                    tags=row["tags"],
-                    specs=row["specs"],
-                    model=model,
-                )
+                try:
+                    row["description"] = generate_description(
+                        client=client,  # type: ignore[arg-type]
+                        name=row["name"],
+                        category=row["category"],
+                        tags=row["tags"],
+                        specs=row["specs"],
+                        model=model,
+                    )
+                except DescriptionGenerationError as exc:
+                    console.print(
+                        f"[bold red]API error for '{escape(row['name'])}':[/] {escape(str(exc))}"
+                    )
+                    row["description"] = GENERATION_FAILED_PLACEHOLDER
+                    failed_products.append(row["name"])
 
             progress.advance(task)
 
-    # Write output CSV
-    if rows:
-        fieldnames = list(rows[0].keys())
-        with open(output_csv, "w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+    # Write output CSV (failed rows keep an explicit error placeholder)
+    fieldnames = list(rows[0].keys())
+    with open(output_csv, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
+    check = safe_glyph("✓", "OK")
+    arrow = safe_glyph("→", "->")
     console.print(
-        f"[bold green]✓[/] Wrote [cyan]{len(rows)}[/] rows → [cyan]{output_csv}[/]"
+        f"[bold green]{check}[/] Wrote [cyan]{len(rows)}[/] rows {arrow} [cyan]{output_csv}[/]"
     )
 
     if preview:
         print_preview_table(rows)
+
+    if failed_products:
+        console.print(
+            f"[bold red]Error:[/] {len(failed_products)} of {len(rows)} descriptions "
+            f"failed to generate: {escape(', '.join(failed_products))}"
+        )
+        console.print(
+            "[bold red]Failed rows contain an explicit error placeholder in the "
+            "output CSV instead of a description.[/]"
+        )
+        sys.exit(1)
 
 
 def chunked(items: list[dict[str, str]], size: int) -> Iterable[list[dict[str, str]]]:
@@ -487,9 +561,11 @@ def push_descriptions(
                     continue
 
                 new_description = row.get(description_column, "")
-                old_description = client.get_description(product_id)
 
                 if preview:
+                    # Only fetch the current description when a diff is shown;
+                    # skipping this halves API calls for non-preview pushes.
+                    old_description = client.get_description(product_id)
                     render_diff(product_id, old_description, new_description)
 
                 if credentials.mock_mode:
@@ -508,13 +584,24 @@ def push_descriptions(
             if not credentials.mock_mode:
                 time.sleep(batch_sleep)
 
-    console.print(f"[bold green]✓[/] Completed pushing {total} products.")
+    check = safe_glyph("✓", "OK")
+    console.print(f"[bold green]{check}[/] Completed pushing {total} products.")
 
 
-@click.group(invoke_without_command=True)
-@click.pass_context
-@click.argument("input_csv", required=False, type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.argument("output_csv", required=False, type=click.Path(dir_okay=False, path_type=Path))
+@click.group()
+def cli() -> None:
+    """
+    AI-powered Shopify product descriptions.
+
+    Use 'generate' to enrich a product CSV with SEO-optimised descriptions
+    and 'push' to send descriptions to Shopify via the Admin API.
+    """
+    configure_utf8_output()
+
+
+@cli.command("generate")
+@click.argument("input_csv", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("output_csv", type=click.Path(dir_okay=False, path_type=Path))
 @click.option(
     "--model",
     default="openai/gpt-4o-mini",
@@ -533,10 +620,9 @@ def push_descriptions(
     default=False,
     help="Print a table of the first 5 results after processing.",
 )
-def cli(
-    context: click.Context,
-    input_csv: Optional[Path],
-    output_csv: Optional[Path],
+def generate_command(
+    input_csv: Path,
+    output_csv: Path,
     model: str,
     dry_run: bool,
     preview: bool,
@@ -548,13 +634,6 @@ def cli(
     INPUT_CSV   Path to the input CSV (columns: name, category, tags, specs)
     OUTPUT_CSV  Path to write the enriched CSV (adds a 'description' column)
     """
-    if context.invoked_subcommand is not None:
-        return
-
-    if input_csv is None or output_csv is None:
-        console.print("[bold red]Error:[/] INPUT_CSV and OUTPUT_CSV are required.")
-        raise click.UsageError("Missing INPUT_CSV or OUTPUT_CSV")
-
     generate_descriptions(
         input_csv=input_csv,
         output_csv=output_csv,
