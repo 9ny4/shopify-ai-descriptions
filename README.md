@@ -1,5 +1,7 @@
 # shopify-ai-descriptions
 
+[![CI](https://github.com/sekkedev/shopify-ai-descriptions/actions/workflows/ci.yml/badge.svg)](https://github.com/sekkedev/shopify-ai-descriptions/actions/workflows/ci.yml)
+
 > AI-powered bulk product description generator for Shopify stores.
 
 Feed it a CSV of products, get back SEO-optimised descriptions — ready to paste straight into your Shopify catalogue.
@@ -15,7 +17,55 @@ Uses [OpenRouter](https://openrouter.ai/) with `openai/gpt-4o-mini` under the ho
 
 ## Demo
 
-Screenshot coming soon
+A real dry-run against the bundled sample CSV (no API key needed):
+
+```text
+$ python generate_descriptions.py generate products_sample.csv output.csv --dry-run --preview
+shopify-ai-descriptions  DRY RUN
+
+✓ Wrote 10 rows → output.csv
+                                             Sample Output
+┌──────────────────────────────────────┬──────────────────────────────────────────────────────────────┐
+│ Product                              │ Description                                                  │
+├──────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ UltraGrip Yoga Mat                   │ [DRY RUN] SEO-optimized description would be generated here. │
+│                                      │ Remove --dry-run to call the AI API.                         │
+├──────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Wireless Noise-Cancelling Headphones │ [DRY RUN] SEO-optimized description would be generated here. │
+│                                      │ Remove --dry-run to call the AI API.                         │
+├──────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Bamboo Cutting Board Set             │ [DRY RUN] SEO-optimized description would be generated here. │
+│                                      │ Remove --dry-run to call the AI API.                         │
+├──────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ Portable Espresso Maker              │ [DRY RUN] SEO-optimized description would be generated here. │
+│                                      │ Remove --dry-run to call the AI API.                         │
+├──────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+│ LED Desk Lamp with USB Charging      │ [DRY RUN] SEO-optimized description would be generated here. │
+│                                      │ Remove --dry-run to call the AI API.                         │
+└──────────────────────────────────────┴──────────────────────────────────────────────────────────────┘
+```
+
+And a real push in mock mode (`SHOPIFY_TOKEN` unset, so nothing is sent), using a copy of `output.csv` with an added `id` column:
+
+```text
+$ python generate_descriptions.py push output_with_ids.csv --store demo-store.myshopify.com --batch-size 5
+Notice: SHOPIFY_TOKEN not set. Running in mock mode; no changes will be sent to Shopify.
+shopify-ai-descriptions push → demo-store.myshopify.com (mock)
+MOCK: Would update product 1001 (description length 97 chars).
+MOCK: Would update product 1002 (description length 97 chars).
+MOCK: Would update product 1003 (description length 97 chars).
+MOCK: Would update product 1004 (description length 97 chars).
+MOCK: Would update product 1005 (description length 97 chars).
+MOCK: Would update product 1006 (description length 97 chars).
+MOCK: Would update product 1007 (description length 97 chars).
+MOCK: Would update product 1008 (description length 97 chars).
+MOCK: Would update product 1009 (description length 97 chars).
+MOCK: Would update product 1010 (description length 97 chars).
+
+✓ Completed pushing 10 products.
+```
+
+The tool has been verified end-to-end in dry-run and mock modes; it has not yet been exercised against a live Shopify store.
 
 ---
 
@@ -36,7 +86,7 @@ Screenshot coming soon
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/9ny4/shopify-ai-descriptions.git
+git clone https://github.com/sekkedev/shopify-ai-descriptions.git
 cd shopify-ai-descriptions
 
 # 2. Create a virtual environment (recommended)
@@ -55,40 +105,42 @@ cp .env.example .env
 
 ## Usage
 
-### Basic
+The CLI has two subcommands: `generate` and `push`.
+
+### Generate descriptions
 
 ```bash
-python generate_descriptions.py products_sample.csv output.csv
+python generate_descriptions.py generate products_sample.csv output.csv
 ```
-
-### Push descriptions to Shopify
-
-```bash
-python generate_descriptions.py push output.csv \
-  --store your-store.myshopify.com \
-  --preview \
-  --batch-size 10
-```
-
-> If `SHOPIFY_TOKEN` isn't set, the push command runs in mock mode and makes no changes.
 
 ### Dry run (no API calls)
 
 ```bash
-python generate_descriptions.py products_sample.csv output.csv --dry-run
+python generate_descriptions.py generate products_sample.csv output.csv --dry-run
 ```
 
 ### With preview table
 
 ```bash
-python generate_descriptions.py products_sample.csv output.csv --dry-run --preview
+python generate_descriptions.py generate products_sample.csv output.csv --dry-run --preview
 ```
 
 ### Custom model
 
 ```bash
-python generate_descriptions.py products.csv output.csv --model anthropic/claude-3-haiku
+python generate_descriptions.py generate products.csv output.csv --model anthropic/claude-3-haiku
 ```
+
+### Push descriptions to Shopify
+
+```bash
+python generate_descriptions.py push output.csv --store your-store.myshopify.com --preview --batch-size 10
+```
+
+> If `SHOPIFY_TOKEN` isn't set, the push command runs in mock mode and makes no changes.
+
+If any row fails to generate, the run prints a failure summary, writes an explicit
+`[ERROR]` placeholder for the affected rows, and exits with a non-zero status code.
 
 ---
 
@@ -128,11 +180,17 @@ See [`products_sample.csv`](products_sample.csv) for a ready-to-use example with
 
 ```
 shopify-ai-descriptions/
-├── generate_descriptions.py   # Main CLI entrypoint
+├── generate_descriptions.py   # Main CLI entrypoint (generate + push subcommands)
 ├── products_sample.csv        # Sample input (10 products)
+├── tests/
+│   ├── conftest.py
+│   └── test_cli.py            # CLI test suite (pytest + click CliRunner)
+├── .github/workflows/ci.yml   # CI: pytest on Ubuntu + Windows, Python 3.11/3.12
 ├── requirements.txt
+├── requirements-dev.txt       # Test dependencies
 ├── .env.example               # Environment variable template
 ├── .gitignore
+├── LICENSE
 └── README.md
 ```
 
@@ -150,21 +208,31 @@ The `push` command updates `body_html` via Shopify Admin REST API (`PUT /admin/a
 ### Example
 
 ```bash
-python generate_descriptions.py push output.csv \
-  --store your-store.myshopify.com \
-  --preview \
-  --batch-size 5 \
-  --batch-sleep 1.5
+python generate_descriptions.py push output.csv --store your-store.myshopify.com --preview --batch-size 5 --batch-sleep 1.5
 ```
 
 ### Preview mode
 
 Add `--preview` to view a rich diff of the existing vs new description before each update.
+The current description is only fetched from Shopify when `--preview` is set.
 
 ### Batch size control
 
 Use `--batch-size` (default 10) to control how many products are updated per batch.
 The CLI waits `--batch-sleep` seconds between batches to help respect API rate limits.
+
+---
+
+## Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite covers the `generate` and `push` subcommands end-to-end in dry-run and
+mock modes, CSV validation, and the failure exit-code path. No network access or
+API keys are required. CI runs the suite on Ubuntu and Windows (Python 3.11 and 3.12).
 
 ---
 
@@ -179,4 +247,4 @@ Using `openai/gpt-4o-mini` at ~$0.15 / 1M input tokens:
 
 ## License
 
-MIT — free to use, modify, and distribute.
+MIT — see [LICENSE](LICENSE).
